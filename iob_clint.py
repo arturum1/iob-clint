@@ -4,8 +4,21 @@
 
 
 def setup(py_params_dict):
+    CSR_IF = py_params_dict["csr_if"] if "csr_if" in py_params_dict else "iob"
+
+    IF_DISPLAY_NAME = {
+        "iob": "IOb",
+        "axil": "AXI-Lite",
+        "wb": "Wishbone",
+    }
+
     attributes_dict = {
         "generate_hw": True,
+        "description": "IObundle's Core Local Interrupt Controller (CLINT).",
+        "version": "0.1",
+        #
+        # Confs
+        #
         "confs": [
             {
                 "name": "DATA_W",
@@ -32,6 +45,9 @@ def setup(py_params_dict):
                 "max": "8",
             },
         ],
+        #
+        # Ports
+        #
         "ports": [
             {
                 "name": "clk_en_rst_s",
@@ -43,7 +59,7 @@ def setup(py_params_dict):
             {
                 "name": "clint_io",
                 "descr": "",
-                "signals": {
+                "signals": [
                     # {'name':'interrupt_o', 'width':'1', 'descr':'be done'},
                     {
                         "name": "rt_clk_i",
@@ -60,10 +76,22 @@ def setup(py_params_dict):
                         "descr": "Machine software interrupt (a.k.a inter-process-interrupt)",
                         "width": "N_CORES",
                     },
+                ],
+            },
+            {
+                "name": "csrs_cbus_s",
+                "descr": f"Control and status interface, when selecting the {IF_DISPLAY_NAME[CSR_IF]} CSR interface.",
+                "signals": {
+                    "type": CSR_IF,
+                    "ADDR_W": 5,
+                    "DATA_W": 32,
+                    "STRB_W": 4,
                 },
             },
-            # CSRs control port created automatically by Py2HWSW
         ],
+        #
+        # Wires
+        #
         "wires": [
             {
                 "name": "internal_wires",
@@ -81,12 +109,19 @@ def setup(py_params_dict):
             },
             # Counter IO signals
             {"name": "cnt_en", "signals": [{"name": "counter_e", "width": 1}]},
-            {"name": "cnt_rst", "signals": [{"name": "counter_e_inverted", "width": 1}]},
+            {
+                "name": "cnt_rst",
+                "signals": [{"name": "counter_e_inverted", "width": 1}],
+            },
             {"name": "cnt_o", "signals": [{"name": "counter", "width": "10"}]},
         ],
+        #
+        # Subblocks
+        #
         "subblocks": [
-            {
+            {  # Currently used for docs only
                 "core_name": "iob_csrs",
+                "instantiate": False,
                 "instance_name": "csrs",
                 "instance_description": "Control/Status Registers",
                 "csrs": [
@@ -98,7 +133,7 @@ def setup(py_params_dict):
                         "n_bits": 8,
                         "rst_val": 0,
                         "log2n_items": 0,
-                        "addr": 0x8000,
+                        # "addr": 0x8000,
                     },
                 ],
                 "csr_if": "iob",
@@ -128,6 +163,9 @@ def setup(py_params_dict):
                 "core_name": "iob_linux_device_drivers",
             },
         ],
+        #
+        # Snippets
+        #
         "snippets": [
             {
                 "verilog_code": """

@@ -36,14 +36,14 @@ module iob_clint_sim_wrapper #(
       .DATA_W (DATA_W),
       .N_CORES(N_CORES)
    ) clint (
-      `include "iob_s_portmap.vs"
+       `include "iob_clint_iob_s_portmap.vs"
 
-      .rt_clk(rtc),
+       .rt_clk(rtc),
 
-      .mtip(mtip),
-      .msip(msip),
+       .mtip(mtip),
+       .msip(msip),
 
-      `include "clk_en_rst_s_s_portmap.vs"
+       `include "iob_clint_iob_clk_s_portmap.vs"
    );
 
 endmodule
