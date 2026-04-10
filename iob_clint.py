@@ -12,10 +12,15 @@ def setup(py_params_dict):
         "wb": "Wishbone",
     }
 
+    # This CLINT module was developed to work in FPGAs and does not use a Real-time clock.
+    # Real-time clock usually are 32.768 kHz.
+    # One could be passed through the inputs of the module.
+    # However, for it to work alterations must be made to the module.
+
     attributes_dict = {
         "generate_hw": True,
         "description": "IObundle's Core Local Interrupt Controller (CLINT).",
-        "version": "0.1",
+        "version": "0.1.0",
         #
         # Confs
         #
@@ -44,6 +49,12 @@ def setup(py_params_dict):
                 "min": "NA",
                 "max": "8",
             },
+            {
+                "name": "FREQ",
+                "descr": "Clock frequency",
+                "type": "P",
+                "val": "100000000",
+            },
         ],
         #
         # Ports
@@ -57,15 +68,19 @@ def setup(py_params_dict):
                 },
             },
             {
-                "name": "clint_io",
-                "descr": "",
+                "name": "rt_clk_i",
                 "signals": [
-                    # {'name':'interrupt_o', 'width':'1', 'descr':'be done'},
                     {
                         "name": "rt_clk_i",
                         "descr": "Real Time clock input if available (usually 32.768 kHz)",
                         "width": "1",
                     },
+                ],
+            },
+            {
+                "name": "interrupt_o",
+                "descr": "RISC-V interrupt interface",
+                "signals": [
                     {
                         "name": "mtip_o",
                         "descr": "Machine timer interrupt pin",
@@ -79,11 +94,23 @@ def setup(py_params_dict):
                 ],
             },
             {
+                "name": "timebase_o",
+                "descr": "Timebase interface",
+                "signals": [
+                    {
+                        "name": "mtime_o",
+                        "descr": "Output from counter for CPU time CSRs. Current implementation increments at every 10us (ticks at 100kHz).",
+                        "width": "64",
+                        "isvar": True,
+                    },
+                ],
+            },
+            {
                 "name": "csrs_cbus_s",
                 "descr": f"Control and status interface, when selecting the {IF_DISPLAY_NAME[CSR_IF]} CSR interface.",
                 "signals": {
                     "type": CSR_IF,
-                    "ADDR_W": 5,
+                    "ADDR_W": 16,
                     "DATA_W": 32,
                     "STRB_W": 4,
                 },
@@ -98,11 +125,10 @@ def setup(py_params_dict):
                 "descr": "",
                 "signals": [
                     {"name": "write", "width": 1},
-                    {"name": "iob_rdata_reg", "width": "DATA_W"},
-                    {"name": "mtimecmp", "width": "64*N_CORES"},
-                    {"name": "mtime", "width": "64"},
-                    {"name": "mtip_reg", "width": "N_CORES"},
-                    {"name": "msip_reg", "width": "N_CORES"},
+                    {"name": "iob_rdata_reg", "width": "DATA_W", "isvar": True},
+                    {"name": "mtimecmp", "width": "N_CORES*64", "isvar": True},
+                    {"name": "mtip_reg", "width": "N_CORES", "isvar": True},
+                    {"name": "msip_reg", "width": "N_CORES", "isvar": True},
                     {"name": "increment_timer", "width": 1},
                     {"name": "increment_timer_r", "width": 1},
                 ],
@@ -130,9 +156,9 @@ def setup(py_params_dict):
                         "descr": "Dummy register for demo",
                         "type": "NOAUTO",
                         "mode": "W",
-                        "n_bits": 8,
+                        "n_bits": 32,
                         "rst_val": 0,
-                        "log2n_items": 0,
+                        "log2n_items": 14,
                         # "addr": 0x8000,
                     },
                 ],
@@ -161,6 +187,15 @@ def setup(py_params_dict):
             # Software modules
             {
                 "core_name": "iob_linux_device_drivers",
+                "compatible_str": "riscv,clint0",
+                # Extra device tree properties specific to this peripheral
+                # - Connect to system CPU 's inteerrupt controller, identified by 'CPU0_intc'
+                # - Set symbolic 'control' name for the reg region
+                "dts_extra_properties": r"""
+       interrupts-extended = < &CPU0_intc 3
+                               &CPU0_intc 7 >;
+       reg-names = "control";
+""",
             },
         ],
         #
@@ -186,19 +221,20 @@ def setup(py_params_dict):
       if (arst_i) begin
          iob_rdata_reg <= {(DATA_W) {1'b0}};
       end else if (iob_addr_i < MTimeCMPBase) begin
-         iob_rdata_reg <= {{(DATA_W - 1) {1'b0}}, msip[iob_addr_i[AddrSelWidth+1:2]]};
+         iob_rdata_reg <= {{(DATA_W - 1) {1'b0}}, msip_o[iob_addr_i[AddrSelWidth+1:2]]};
       end else if (iob_addr_i < MTimeBase) begin
-         iob_rdata_reg <= mtimecmp[iob_addr_i[AddrSelWidth+2:3]][(iob_addr_i[2]+1)*DATA_W-1-:DATA_W];
+         iob_rdata_reg <= mtimecmp[(iob_addr_i[AddrSelWidth+2:3]*64)+(iob_addr_i[2]+1)*DATA_W-1-:DATA_W];
       end else begin
-         iob_rdata_reg <= mtime[(iob_addr_i[2]+1)*DATA_W-1-:DATA_W];
+         iob_rdata_reg <= mtime_o[(iob_addr_i[2]+1)*DATA_W-1-:DATA_W];
       end
    end
 
-   assign counter_e       = (counter < `FREQ / 100000 - 1);
-   assign increment_timer = (counter == `FREQ / 100000 - 1);
+   // Increment timer every 10uS
+   assign counter_e       = (counter < FREQ / 100000 - 1);
+   assign increment_timer = (counter == FREQ / 100000 - 1);
 
    // Machine-level Timer Device (MTIMER)
-   assign mtip            = mtip_reg;
+   assign mtip_o            = mtip_reg;
    always @(*) begin
       if (arst_i)
          for (k = 0; k < N_CORES; k = k + 1) begin
@@ -206,7 +242,7 @@ def setup(py_params_dict):
          end
       else
          for (k = 0; k < N_CORES; k = k + 1) begin
-            mtip_reg[k] = (mtime >= mtimecmp[k][63:0]);
+            mtip_reg[k] = (mtime_o >= mtimecmp[k*64+:64]);
          end
    end
 
@@ -214,32 +250,32 @@ def setup(py_params_dict):
    always @(posedge clk_i, posedge arst_i) begin
       if (arst_i) begin
          for (c = 0; c < N_CORES; c = c + 1) begin
-            mtimecmp[c] <= {64{1'b1}};
+            mtimecmp[c*64+:64] <= {64{1'b1}};
          end
-      end else if (iob_avalid_i & write & (iob_addr_i >= MTimeCMPBase) & (iob_addr_i < (MTimeCMPBase + 8 * N_CORES))) begin
-         mtimecmp[iob_addr_i[AddrSelWidth+2:3]][(iob_addr_i[2]+1)*DATA_W-1-:DATA_W] <= iob_wdata_i;
+      end else if (iob_valid_i & write & (iob_addr_i >= MTimeCMPBase) & (iob_addr_i < (MTimeCMPBase + 8 * N_CORES))) begin
+         mtimecmp[(iob_addr_i[AddrSelWidth+2:3]*64)+(iob_addr_i[2]+1)*DATA_W-1-:DATA_W] <= iob_wdata_i;
       end
    end
 
-   // mtime
+   // mtime_o
    always @(posedge clk_i, posedge arst_i) begin
       if (arst_i) begin
-         mtime <= {64{1'b0}};
-      end else if (iob_avalid_i & write & (iob_addr_i >= MTimeBase) & (iob_addr_i < (MTimeBase + 8))) begin
-         mtime[(iob_addr_i[2]+1)*DATA_W-1-:DATA_W] <= iob_wdata_i;
+         mtime_o <= {64{1'b0}};
+      end else if (iob_valid_i & write & (iob_addr_i >= MTimeBase) & (iob_addr_i < (MTimeBase + 8))) begin
+         mtime_o[(iob_addr_i[2]+1)*DATA_W-1-:DATA_W] <= iob_wdata_i;
       end else if (increment_timer_r) begin
-         mtime <= mtime + 1'b1;
+         mtime_o <= mtime_o + 1'b1;
       end
    end
 
-   // Machine-level Software Interrupt Device (MSWI) - msip
-   assign msip = msip_reg;
+   // Machine-level Software Interrupt Device (MSWI) - msip_o
+   assign msip_o = msip_reg;
    always @(posedge clk_i, posedge arst_i) begin
       if (arst_i) begin
          for (j = 0; j < N_CORES; j = j + 1) begin
             msip_reg[j] <= {1'b0};
          end
-      end else if (iob_avalid_i & write & (iob_addr_i >= MSIBase) & (iob_addr_i < (MSIBase + 4 * N_CORES))) begin
+      end else if (iob_valid_i & write & (iob_addr_i >= MSIBase) & (iob_addr_i < (MSIBase + 4 * N_CORES))) begin
          msip_reg[iob_addr_i[AddrSelWidth+1:2]] <= iob_wdata_i[0];
       end
    end
@@ -261,7 +297,7 @@ def setup(py_params_dict):
      if (arst_i) begin
         rtc_states <= {STAGES{1'b0}};
      end else begin
-        rtc_states <= {rtc_states[STAGES-2:0], rt_clk};
+        rtc_states <= {rtc_states[STAGES-2:0], rt_clk_i};
      end
   end
 
@@ -286,7 +322,7 @@ def setup(py_params_dict):
 
     // Read data valid
     iob_rvalid_o_en = ~write;
-    iob_rvalid_o_nxt = iob_avalid_i;
+    iob_rvalid_o_nxt = iob_valid_i;
 
     // Ready signal, is always 1 since the read and write to the CLINT only take one clock cycle.
     iob_ready_o = 1'b1;

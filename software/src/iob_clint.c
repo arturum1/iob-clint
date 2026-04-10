@@ -1,4 +1,4 @@
-#include "iob-clint.h"
+#include "iob_clint.h"
 
 void clint_init(int base_address) { clint_base = base_address; }
 

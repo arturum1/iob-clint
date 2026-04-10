@@ -1,6 +1,6 @@
 #include "bsp.h"
-#include "iob-clint.h"
 #include "iob-uart16550.h"
+#include "iob_clint.h"
 #include "iob_soc_opencryptolinux_conf.h"
 #include "iob_soc_opencryptolinux_periphs.h"
 #include "iob_soc_opencryptolinux_system.h"
